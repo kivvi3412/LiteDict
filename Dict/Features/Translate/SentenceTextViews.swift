@@ -228,8 +228,9 @@ struct SelectableTextView: NSViewRepresentable {
                     if self.parent.selectionRange.length != 0 {
                         self.parent.selectionRange = NSRange(location: 0, length: 0)
                     }
-                    if let caretIndex {
-                        self.parent.onHoveredCharacterIndex?(caretIndex)
+                    if let caretIndex,
+                       let highlightingTextView = textView as? SentenceHighlightingTextView {
+                        highlightingTextView.setHoveredCharacterIndex(caretIndex)
                     }
                 }
             }
@@ -407,8 +408,20 @@ struct TranslatedParagraphTextView: NSViewRepresentable {
             let documentHeight = textView.bounds.height
             guard documentHeight > visibleHeight, visibleHeight > 0 else { return }
 
-            let targetY = boundingRect.midY - (visibleHeight / 2)
+            let currentMinY = clipView.bounds.origin.y
+            let currentMaxY = currentMinY + visibleHeight
+
+            let targetY: CGFloat
+            if boundingRect.minY < currentMinY || boundingRect.height > visibleHeight {
+                targetY = boundingRect.minY
+            } else if boundingRect.maxY > currentMaxY {
+                targetY = boundingRect.maxY - visibleHeight
+            } else {
+                return
+            }
+
             let clampedY = min(max(0, targetY), max(0, documentHeight - visibleHeight))
+            guard abs(clampedY - currentMinY) > 0.5 else { return }
             NSAnimationContext.runAnimationGroup { animation in
                 animation.duration = 0.18
                 clipView.animator().setBoundsOrigin(NSPoint(x: 0, y: clampedY))
@@ -519,7 +532,7 @@ final class SentenceHighlightingTextView: NSTextView {
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        hoveredCharacterIndex = nil
+        setHoveredCharacterIndex(nil)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -541,7 +554,10 @@ final class SentenceHighlightingTextView: NSTextView {
         }
 
         let viewPoint = convert(windowPoint, from: nil)
-        guard bounds.contains(viewPoint) else { return }
+        guard visibleRect.contains(viewPoint) else {
+            setHoveredCharacterIndex(nil)
+            return
+        }
 
         let containerPoint = NSPoint(
             x: viewPoint.x - textContainerOrigin.x,
@@ -634,7 +650,7 @@ final class SentenceHighlightingTextView: NSTextView {
         setHoveredCharacterIndex(characterIndex)
     }
 
-    private func setHoveredCharacterIndex(_ index: Int?) {
+    func setHoveredCharacterIndex(_ index: Int?) {
         guard hoveredCharacterIndex != index else { return }
         hoveredCharacterIndex = index
         DispatchQueue.main.async { [weak self] in
