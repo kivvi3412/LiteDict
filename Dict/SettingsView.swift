@@ -11,8 +11,6 @@ struct SettingsView: View {
     private var autoPlayAudio = false
     @AppStorage(PreferenceKey.reasoningEffort)
     private var reasoningEffort = "low"
-    @AppStorage(PreferenceKey.customReasoningEffort)
-    private var customReasoningEffort = ""
     @AppStorage(PreferenceKey.glassOpacity)
     private var glassOpacity = 0.86
     @AppStorage(PreferenceKey.highlightOpacity)
@@ -68,30 +66,16 @@ struct SettingsView: View {
                     }
 
                     LabeledContent("思考强度") {
-                        HStack(spacing: 8) {
-                            Picker("", selection: $reasoningEffort) {
-                                Text("Low").tag("low")
-                                Text("High").tag("high")
-                                Text("Max").tag("max")
-                                Text("自定义").tag("custom")
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .frame(width: 250)
-
-                            if reasoningEffort == "custom" {
-                                TextField("自定义强度", text: $customReasoningEffort)
-                                    .textFieldStyle(.plain)
-                                    .multilineTextAlignment(.trailing)
-                                    .frame(width: 120)
-                            }
+                        Picker("", selection: $reasoningEffort) {
+                            Text("None").tag("none")
+                            Text("Low").tag("low")
+                            Text("High").tag("high")
+                            Text("Max").tag("max")
                         }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 250)
                     }
-
-                    Text("应用会请求 Base URL 下的 Responses 接口；若服务只支持 Chat Completions，会自动使用兼容回退。API Key 仅保存在本机应用偏好设置中。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Section("查词") {

@@ -244,11 +244,10 @@ struct LiteDictApp: App {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    @ViewBuilder
     private var pageContent: some View {
-        switch selection {
-        case .lookup:
+        ZStack {
             WordLookupView(
+                isActive: selection == .lookup,
                 lookupRequest: lookupRequest,
                 restoredWord: lookupHistory.currentWord,
                 restoredQuery: lookupHistory.currentQuery,
@@ -259,10 +258,16 @@ struct LiteDictApp: App {
                 onGoBack: goBack,
                 onGoForward: goForward
             )
-        case .sentence:
-            SentenceTranslateView()
-        case .settings:
-            SettingsView()
+            .opacity(selection == .lookup ? 1 : 0)
+            .allowsHitTesting(selection == .lookup)
+
+            SentenceTranslateView(isActive: selection == .sentence)
+                .opacity(selection == .sentence ? 1 : 0)
+                .allowsHitTesting(selection == .sentence)
+
+            if selection == .settings {
+                SettingsView()
+            }
         }
     }
 

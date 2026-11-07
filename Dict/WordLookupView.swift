@@ -2,6 +2,7 @@ import Combine
 import SwiftUI
 
 struct WordLookupView: View {
+    var isActive = true
     let lookupRequest: WordLookupRequest?
     let restoredWord: String
     let restoredQuery: String
@@ -14,21 +15,71 @@ struct WordLookupView: View {
 
     @AppStorage(PreferenceKey.autoPlayAudio) private var autoPlayAudio = false
 
-    @State private var query = ""
-    @State private var submittedWord = ""
+    @State private var query: String
+    @State private var submittedWord: String
     @State private var suggestions: [SuggestEntry] = []
     @State private var nativeEntryNames: Set<String> = []
     @State private var result: WordLookupResult?
-    @State private var status: LookupStatus = .idle
+    @State private var status: LookupStatus
     @State private var showsSuggestions = false
     @State private var highlightedSuggestionIndex: Int?
-    @State private var suppressAutocomplete = false
+    @State private var suppressAutocomplete: Bool
     @State private var pendingProgrammaticQuery: String?
     @State private var querySubject = PassthroughSubject<String, Never>()
     @State private var suggestionCancellable: AnyCancellable?
     @State private var autocompleteTask: Task<Void, Never>?
     @State private var lookupTask: Task<Void, Never>?
     @FocusState private var searchFieldFocused: Bool
+
+    init(
+        isActive: Bool = true,
+        lookupRequest: WordLookupRequest?,
+        restoredWord: String,
+        restoredQuery: String,
+        canGoBack: Bool,
+        canGoForward: Bool,
+        onQueryChange: @escaping (String) -> Void,
+        onRecordHistory: @escaping (String) -> Void,
+        onGoBack: @escaping () -> Void,
+        onGoForward: @escaping () -> Void
+    ) {
+        self.isActive = isActive
+        self.lookupRequest = lookupRequest
+        self.restoredWord = restoredWord
+        self.restoredQuery = restoredQuery
+        self.canGoBack = canGoBack
+        self.canGoForward = canGoForward
+        self.onQueryChange = onQueryChange
+        self.onRecordHistory = onRecordHistory
+        self.onGoBack = onGoBack
+        self.onGoForward = onGoForward
+
+        let trimmedWord = restoredWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedQuery = restoredQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if lookupRequest == nil,
+           !trimmedWord.isEmpty,
+           trimmedQuery == trimmedWord,
+           let cached = Services.shared.cachedLookupResult(for: trimmedWord) {
+            _query = State(initialValue: trimmedWord)
+            _submittedWord = State(initialValue: trimmedWord)
+            _result = State(initialValue: cached)
+            _status = State(initialValue: .loaded)
+            _suppressAutocomplete = State(initialValue: true)
+        } else if lookupRequest == nil, !trimmedQuery.isEmpty, trimmedQuery != trimmedWord {
+            _query = State(initialValue: restoredQuery)
+            _submittedWord = State(initialValue: "")
+            _result = State(initialValue: nil)
+            _status = State(initialValue: .idle)
+            _suppressAutocomplete = State(initialValue: true)
+        } else {
+            _query = State(initialValue: "")
+            _submittedWord = State(initialValue: "")
+            _result = State(initialValue: nil)
+            _status = State(initialValue: .idle)
+            _suppressAutocomplete = State(initialValue: false)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,10 +102,15 @@ struct WordLookupView: View {
         .onChange(of: lookupRequest) { _, newRequest in
             applyLookupRequest(newRequest)
         }
+        .onChange(of: isActive) { _, active in
+            if !active {
+                searchFieldFocused = false
+                showsSuggestions = false
+            }
+        }
         .onDisappear {
             suggestionCancellable?.cancel()
             autocompleteTask?.cancel()
-            lookupTask?.cancel()
         }
     }
 
@@ -400,7 +456,7 @@ struct WordLookupView: View {
         }
 
         if trimmedQuery == word, !word.isEmpty {
-            beginLookup(word, recordHistory: false)
+            beginLookup(word, recordHistory: false, playAudio: false)
         } else {
             suppressAutocomplete = true
             pendingProgrammaticQuery = queryText
@@ -408,7 +464,11 @@ struct WordLookupView: View {
         }
     }
 
-    private func beginLookup(_ rawWord: String, recordHistory: Bool = true) {
+    private func beginLookup(
+        _ rawWord: String,
+        recordHistory: Bool = true,
+        playAudio: Bool = true
+    ) {
         let word = rawWord.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !word.isEmpty else { return }
         if recordHistory {
@@ -428,8 +488,19 @@ struct WordLookupView: View {
         showsSuggestions = false
         highlightedSuggestionIndex = nil
         searchFieldFocused = false
-        result = nil
 
+        if let cached = Services.shared.cachedLookupResult(for: word) {
+            result = cached
+            status = .loaded
+            if playAudio, autoPlayAudio {
+                Task { @MainActor in
+                    await Services.shared.playAudio(word: cached.word, type: 2)
+                }
+            }
+            return
+        }
+
+        result = nil
         status = .loading
 
         lookupTask = Task { @MainActor in
@@ -439,7 +510,7 @@ struct WordLookupView: View {
                 result = lookupResult
                 status = .loaded
 
-                if autoPlayAudio {
+                if playAudio, autoPlayAudio {
                     await Services.shared.playAudio(word: lookupResult.word, type: 2)
                 }
             } catch is CancellationError {

@@ -69,7 +69,11 @@ final class Services {
 
     private let session: URLSession
     private let decoder = JSONDecoder()
+    private let encoder = JSONEncoder()
     private var audioPlayer: AVAudioPlayer?
+    private var wordLookupCache: [String: WordLookupResult] = [:]
+    private var wordLookupCacheOrder: [String] = []
+    private let wordLookupCacheLimit = 60
 
     private init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -77,6 +81,55 @@ final class Services {
         configuration.timeoutIntervalForResource = 90
         configuration.waitsForConnectivity = false
         session = URLSession(configuration: configuration)
+        loadPersistedWordLookupCache()
+    }
+
+    func cachedLookupResult(for rawWord: String) -> WordLookupResult? {
+        let key = Self.cacheKey(for: rawWord)
+        guard !key.isEmpty else { return nil }
+        return wordLookupCache[key]
+    }
+
+    private func storeCachedLookupResult(_ result: WordLookupResult, for rawWord: String) {
+        let key = Self.cacheKey(for: rawWord)
+        guard !key.isEmpty else { return }
+        wordLookupCache[key] = result
+        wordLookupCacheOrder.removeAll { $0 == key }
+        wordLookupCacheOrder.append(key)
+
+        if wordLookupCacheOrder.count > wordLookupCacheLimit {
+            let overflow = wordLookupCacheOrder.count - wordLookupCacheLimit
+            let evictedKeys = wordLookupCacheOrder.prefix(overflow)
+            for evicted in evictedKeys {
+                wordLookupCache.removeValue(forKey: evicted)
+            }
+            wordLookupCacheOrder.removeFirst(overflow)
+        }
+        persistWordLookupCache()
+    }
+
+    private func loadPersistedWordLookupCache() {
+        guard let data = UserDefaults.standard.data(forKey: PreferenceKey.wordLookupCache),
+              let entries = try? decoder.decode([WordLookupResult].self, from: data) else {
+            return
+        }
+        for entry in entries {
+            let key = Self.cacheKey(for: entry.word)
+            guard !key.isEmpty else { continue }
+            wordLookupCache[key] = entry
+            wordLookupCacheOrder.removeAll { $0 == key }
+            wordLookupCacheOrder.append(key)
+        }
+    }
+
+    private func persistWordLookupCache() {
+        let orderedEntries = wordLookupCacheOrder.compactMap { wordLookupCache[$0] }
+        guard let data = try? encoder.encode(orderedEntries) else { return }
+        UserDefaults.standard.set(data, forKey: PreferenceKey.wordLookupCache)
+    }
+
+    private static func cacheKey(for rawWord: String) -> String {
+        rawWord.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     // MARK: - Youdao
@@ -158,6 +211,10 @@ final class Services {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw DictError.emptyText }
 
+        if let cached = cachedLookupResult(for: trimmed) {
+            return cached
+        }
+
         let url = try youdaoURL(
             path: "/jsonapi",
             queryItems: [
@@ -201,24 +258,24 @@ final class Services {
 
         let wordForms = wordNode?.wfs?
             .compactMap(\.wf)
-            .compactMap { wrapper -> (name: String, value: String)? in
+            .compactMap { wrapper -> WordForm? in
                 guard let name = wrapper.name?.trimmingCharacters(in: .whitespacesAndNewlines),
                       let value = wrapper.value?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !name.isEmpty, !value.isEmpty else {
                     return nil
                 }
-                return (name, value)
+                return WordForm(name: name, value: value)
             } ?? []
 
         let phrases = response.phrs?.phrs?
             .compactMap(\.phr)
-            .compactMap { detail -> (headword: String, translation: String)? in
+            .compactMap { detail -> WordPhrase? in
                 guard let headword = detail.headword?.l?.i?.trimmingCharacters(in: .whitespacesAndNewlines),
                       let translation = detail.trs?.first?.tr?.l?.i?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !headword.isEmpty, !translation.isEmpty else {
                     return nil
                 }
-                return (headword, translation)
+                return WordPhrase(headword: headword, translation: translation)
             } ?? []
 
         var examTags: [String] = []
@@ -288,7 +345,7 @@ final class Services {
             }
         }
 
-        return WordLookupResult(
+        let lookupResult = WordLookupResult(
             word: trimmed,
             usPhonetic: isChineseInput
                 ? chinesePhonetic
@@ -303,6 +360,8 @@ final class Services {
             examples: Array(examples.prefix(8)),
             translations: translations
         )
+        storeCachedLookupResult(lookupResult, for: trimmed)
+        return lookupResult
     }
 
     private func youdaoPhraseTranslation(for phrase: String) async -> String? {
@@ -887,9 +946,14 @@ final class Services {
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": userPrompt]
             ],
-            "temperature": 0.2,
-            "reasoning_effort": configuration.reasoningEffort
+            "temperature": 0.2
         ]
+        if configuration.reasoningEffort == "none" {
+            payload["thinking"] = ["type": "disabled"]
+        } else {
+            payload["thinking"] = ["type": "enabled"]
+            payload["reasoning_effort"] = configuration.reasoningEffort
+        }
         if jsonMode {
             payload["response_format"] = ["type": "json_object"]
         }

@@ -294,27 +294,37 @@ struct YoudaoDetailResponse: Decodable {
     }
 }
 
-struct WordExample: Identifiable {
+struct WordExample: Identifiable, Codable {
     let id: Int
     let source: String
     let translation: String
 }
 
-struct WordTranslationOption: Identifiable {
+struct WordTranslationOption: Identifiable, Codable {
     let id: Int
     let term: String
     let partOfSpeech: String
     let definition: String
 }
 
-struct WordLookupResult {
+struct WordForm: Codable {
+    let name: String
+    let value: String
+}
+
+struct WordPhrase: Codable {
+    let headword: String
+    let translation: String
+}
+
+struct WordLookupResult: Codable {
     var word: String = ""
     var usPhonetic: String = ""
     var ukPhonetic: String = ""
     var examTags: [String] = []
     var definitions: [String] = []
-    var wordForms: [(name: String, value: String)] = []
-    var phrases: [(headword: String, translation: String)] = []
+    var wordForms: [WordForm] = []
+    var phrases: [WordPhrase] = []
     var examples: [WordExample] = []
     var translations: [WordTranslationOption] = []
 }
@@ -391,7 +401,7 @@ struct BilingualAlignmentResponse: Decodable {
     let sentences: [SentencePair]
 }
 
-struct SentencePair: Identifiable, Decodable {
+struct SentencePair: Identifiable, Codable {
     let id: Int
     let en: String
     let zh: String
@@ -449,6 +459,7 @@ enum PreferenceKey {
     static let wordHistoryIndex = "wordHistoryIndex"
     static let lastLookupWord = "lastLookupWord"
     static let lastSearchQuery = "lastSearchQuery"
+    static let wordLookupCache = "wordLookupCache"
     static let translationInstructions = "translationInstructions"
     static let contextPromptTemplate = "contextPromptTemplate"
     static let reasoningEffort = "reasoningEffort"
